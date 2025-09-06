@@ -6,8 +6,7 @@ from typing import Optional
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
+from telegram.ext import JobQueue
 from dotenv import load_dotenv
 
 from src.scraper import MenuScraper
@@ -32,7 +31,6 @@ class KlopasBot:
             raise ValueError("TELEGRAM_BOT_TOKEN nije postavljen u .env fajlu")
             
         self.application = Application.builder().token(self.token).build()
-        self.scheduler = AsyncIOScheduler(timezone='Europe/Belgrade')
         
         # Komponente za rad sa jelovnikom
         self.scraper = MenuScraper()
@@ -52,8 +50,17 @@ class KlopasBot:
         self.application.add_handler(CommandHandler("danas", self.today_command))
         self.application.add_handler(CommandHandler("help", self.help_command))
         
-        # Message handler za dugmiće sa tastature
-        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_keyboard_button))
+        # Message handler za mention poruke (@KlopasBOT) - samo u grupama  
+        self.application.add_handler(MessageHandler(
+            filters.TEXT & (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP), 
+            self.handle_group_message
+        ))
+        
+        # Message handler za dugmiće sa tastature (samo u privatnom chatu)
+        self.application.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, 
+            self.handle_keyboard_button
+        ))
         
         # Callback za inline dugmad
         self.application.add_handler(CallbackQueryHandler(self.button_callback))
@@ -95,7 +102,13 @@ class KlopasBot:
 /jelovnik - Prikaži opcije za jelovnik
 /help - Ova poruka
 
-*Dugmići:*
+*U grupama (tagovi):*
+@klopasbot danas - Jelovnik za danas
+@klopasbot sutra - Jelovnik za sutra
+@klopasbot novi mesec - Preuzmi najnoviji jelovnik
+@klopasbot pomoć - Prikaži pomoć
+
+*Dugmići (privatni chat):*
 🍽️ Danas - Prikaži današnji jelovnik
 📅 Sutra - Prikaži sutrašnji jelovnik
 🔄 Novi mesec - Preuzmi najnoviji jelovnik
@@ -153,6 +166,70 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
             await self.download_new_month_menu(update)
         elif text == "ℹ️ Pomoć":
             await self.help_command(update, context)
+    
+    async def handle_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler za mention poruke (@KlopasBOT danas/sutra)"""
+        logger.info(f"=== GROUP MESSAGE HANDLER TRIGGERED ===")
+        logger.info(f"Chat ID: {update.message.chat.id}")
+        logger.info(f"Chat type: {update.message.chat.type}")
+        logger.info(f"From user: {update.message.from_user.username if update.message.from_user else 'Unknown'}")
+        
+        message_text = update.message.text
+        if not message_text:
+            logger.info("No message text, ignoring")
+            return
+            
+        logger.info(f"Message text: '{message_text}'")
+        
+        # Proveri da li bot username postoji u mention entities
+        bot_mentioned = False
+        bot_username = context.bot.username.lower()
+        logger.info(f"Bot username: @{bot_username}")
+        
+        # Proveri mention entities
+        if update.message.entities:
+            logger.info(f"Found {len(update.message.entities)} entities")
+            for entity in update.message.entities:
+                logger.info(f"Entity type: {entity.type}, offset: {entity.offset}, length: {entity.length}")
+                if entity.type == 'mention':
+                    mentioned_username = message_text[entity.offset:entity.offset + entity.length].lower()
+                    logger.info(f"Found mention: {mentioned_username}")
+                    if mentioned_username == f"@{bot_username}":
+                        bot_mentioned = True
+                        logger.info("BOT WAS MENTIONED!")
+                        break
+        else:
+            logger.info("No entities in message")
+        
+        if not bot_mentioned:
+            logger.info(f"Bot @{bot_username} not mentioned, ignoring")
+            return
+            
+        logger.info("Bot mentioned! Processing command...")
+        message_text_lower = message_text.lower()
+            
+        # Izvuci komandu iz poruke
+        if "danas" in message_text_lower or "today" in message_text_lower:
+            await self.send_menu_for_date(update, datetime.now())
+        elif "sutra" in message_text_lower or "tomorrow" in message_text_lower:
+            tomorrow = datetime.now() + timedelta(days=1)
+            await self.send_menu_for_date(update, tomorrow)
+        elif "jelovnik" in message_text_lower or "menu" in message_text_lower:
+            await self.menu_command(update, context)
+        elif "pomoć" in message_text_lower or "help" in message_text_lower:
+            await self.help_command(update, context)
+        elif "novi mesec" in message_text_lower or "new month" in message_text_lower:
+            await self.download_new_month_menu(update)
+        else:
+            # Ako nema specifičnu komandu, pokaži opcije
+            await update.message.reply_text(
+                "🍽️ Klopas Bot\n\n"
+                "Mogu da vam pomožem sa:\n"
+                f"@{bot_username} danas - jelovnik za danas\n"
+                f"@{bot_username} sutra - jelovnik za sutra\n"
+                f"@{bot_username} novi mesec - preuzmi najnoviji jelovnik\n"
+                f"@{bot_username} pomoć - sve dostupne opcije"
+            )
     
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler za callback dugmad"""
@@ -350,35 +427,20 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
             except Exception as e:
                 logger.error(f"Greška pri slanju u grupu: {e}")
                 
-    def setup_scheduler(self):
-        """Postavi scheduler za automatsko slanje"""
-        
-        # Dodaj job za svaki radni dan u 20:00
-        self.scheduler.add_job(
-            self.scheduled_daily_menu,
-            CronTrigger(
-                day_of_week='mon-fri',
-                hour=20,
-                minute=0,
-                timezone='Europe/Belgrade'
-            ),
-            id='daily_menu_notification',
-            name='Dnevno slanje jelovnika',
-            replace_existing=True,
-            args=[self.application]  # Proslijedi application kao context
-        )
-        
-        self.scheduler.start()
-        logger.info("Scheduler pokrenut - slanje jelovnika radnim danima u 20:00")
-        
     def run(self):
         """Pokreni bot"""
         
         # Postavi handlere
         self.setup_handlers()
         
-        # Postavi scheduler
-        self.setup_scheduler()
+        # Postavi daily job - svaki dan u 20:00 (8 PM)
+        job_queue = self.application.job_queue
+        job_queue.run_daily(
+            self.scheduled_daily_menu,
+            time(hour=20, minute=0),  # 20:00
+            name='daily_menu_notification'
+        )
+        logger.info("Scheduler pokrenut - slanje jelovnika svaki dan u 20:00")
         
         # Pokreni bot
         logger.info("Bot pokrenut...")
