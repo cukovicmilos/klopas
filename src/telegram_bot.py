@@ -1,5 +1,6 @@
 import os
 import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta, time
 from pathlib import Path
 from typing import Optional
@@ -15,9 +16,25 @@ from src.data_organizer import DataOrganizer
 
 load_dotenv()
 
+# Setup log rotation - max 5MB per file, keep 5 backup files
+log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# File handler with rotation
+file_handler = RotatingFileHandler(
+    'bot.log', 
+    maxBytes=5*1024*1024,  # 5MB
+    backupCount=5          # Keep 5 old log files
+)
+file_handler.setFormatter(log_formatter)
+
+# Console handler
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(log_formatter)
+
+# Configure root logger
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    handlers=[file_handler, console_handler]
 )
 logger = logging.getLogger(__name__)
 

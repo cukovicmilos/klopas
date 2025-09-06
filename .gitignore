@@ -19,6 +19,8 @@ data/daily/*.md
 
 # Logs
 logs/
+bot.log
+bot.log.*
 
 # Environment
 .env
