@@ -1,5 +1,7 @@
 # Klopas Bot 🍽️
 
+**Verzija 0.9**
+
 Telegram bot za automatsko obaveštavanje o jelovniku u vrtiću "Naša Radost" Subotica.
 
 ## Funkcionalnosti
