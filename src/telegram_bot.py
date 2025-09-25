@@ -170,6 +170,7 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
         """Handler za /sutra komandu"""
         tomorrow = datetime.now() + timedelta(days=1)
         await self.send_menu_for_date(update, tomorrow)
+
         
     async def handle_keyboard_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler za dugmiće sa tastature"""
@@ -408,43 +409,67 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
             
     async def scheduled_daily_menu(self, context: ContextTypes.DEFAULT_TYPE):
         """Funkcija koja se poziva svaki radni dan u 20:00"""
-        
-        tomorrow = datetime.now() + timedelta(days=1)
-        
+
+        logger.info("=" * 50)
+        logger.info("SCHEDULER TRIGGERED - scheduled_daily_menu started")
+        logger.info("=" * 50)
+
+        now = datetime.now()
+        tomorrow = now + timedelta(days=1)
+
+        logger.info(f"Current time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Tomorrow: {tomorrow.strftime('%Y-%m-%d %H:%M:%S')} (weekday: {tomorrow.weekday()})")
+        logger.info(f"Group ID configured: {self.group_id}")
+
         # Proveri da li je sutra radni dan
         if tomorrow.weekday() >= 5:  # Vikend
             logger.info("Sutra je vikend, ne šaljem jelovnik")
             return
-            
+
         # Formatiraj datum za ime fajla
         date_str = tomorrow.strftime('%Y-%m-%d')
         file_path = self.daily_dir / f"{date_str}.md"
-        
+
+        logger.info(f"Looking for menu file: {file_path}")
+
         # Proveri da li fajl postoji
         if not file_path.exists():
             logger.warning(f"Jelovnik za {date_str} ne postoji")
             return
-            
+
+        logger.info(f"Menu file found! Reading content...")
+
         # Pročitaj jelovnik
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
-            
+
+        logger.info(f"Menu content read ({len(content)} chars)")
+
         # Formatiraj poruku
         message = "🔔 *Podsetnik za sutra*\n\n"
         message += self._format_menu_message(content, tomorrow)
-        
+
+        logger.info(f"Message formatted ({len(message)} chars)")
+
         # Pošalji u grupu
         if self.group_id:
             try:
+                logger.info(f"Sending message to group {self.group_id}...")
                 await context.bot.send_message(
                     chat_id=self.group_id,
                     text=message,
                     parse_mode='Markdown'
                 )
-                logger.info(f"Poslat jelovnik za {date_str} u grupu")
+                logger.info(f"✅ SUCCESS: Poslat jelovnik za {date_str} u grupu!")
+                logger.info("=" * 50)
             except Exception as e:
-                logger.error(f"Greška pri slanju u grupu: {e}")
-                
+                logger.error(f"❌ GREŠKA pri slanju u grupu: {e}")
+                logger.error("=" * 50)
+        else:
+            logger.error("❌ Group ID nije konfigurisan!")
+            logger.error("=" * 50)
+
+
     def run(self):
         """Pokreni bot"""
         
