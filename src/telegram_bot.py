@@ -4,6 +4,7 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta, time
 from pathlib import Path
 from typing import Optional
+import pytz
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
@@ -450,15 +451,50 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
         # Postavi handlere
         self.setup_handlers()
         
-        # Postavi daily job - svaki dan u 20:00 (8 PM)
+        # Postavi daily job - svaki dan u 20:00 (8 PM) lokalnog vremena
         job_queue = self.application.job_queue
+        belgrade_tz = pytz.timezone('Europe/Belgrade')
         job_queue.run_daily(
             self.scheduled_daily_menu,
-            time(hour=20, minute=0),  # 20:00
+            time(hour=20, minute=0, tzinfo=belgrade_tz),  # 20:00 Belgrade time
             name='daily_menu_notification'
         )
-        logger.info("Scheduler pokrenut - slanje jelovnika svaki dan u 20:00")
+        logger.info("Scheduler pokrenut - slanje jelovnika svaki dan u 20:00 (Belgrade vreme)")
         
-        # Pokreni bot
+        # Pokreni bot sa error handling
         logger.info("Bot pokrenut...")
-        self.application.run_polling(allowed_updates=Update.ALL_TYPES)
+        self._run_bot_with_retry()
+
+    def _run_bot_with_retry(self):
+        """Pokreni bot sa automatskim retry logikom"""
+        import time
+        retry_count = 0
+        max_retries = 5
+        base_delay = 30  # sekundi
+
+        while retry_count < max_retries:
+            try:
+                logger.info(f"Pokušaj pokretanja bota #{retry_count + 1}")
+                self.application.run_polling(
+                    allowed_updates=Update.ALL_TYPES,
+                    drop_pending_updates=True,  # Ignoriši stare poruke
+                    connect_timeout=60,  # 60 sekundi timeout za connection
+                    read_timeout=60,     # 60 sekundi timeout za čitanje
+                    write_timeout=60     # 60 sekundi timeout za pisanje
+                )
+                # Ako dođemo do ovde, bot je uspešno završen
+                logger.info("Bot je uspešno završen")
+                break
+
+            except Exception as e:
+                retry_count += 1
+                delay = base_delay * (2 ** (retry_count - 1))  # Exponential backoff
+
+                logger.error(f"Greška pri radu bota (pokušaj {retry_count}/{max_retries}): {e}")
+
+                if retry_count < max_retries:
+                    logger.info(f"Restartovanje bota za {delay} sekundi...")
+                    time.sleep(delay)
+                else:
+                    logger.error("Maksimalni broj pokušaja dostignut. Bot se zaustavlja.")
+                    raise

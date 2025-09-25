@@ -34,3 +34,4 @@ bot.log.*
 
 # Claude
 .claude/agents/
+CLAUDE.md
