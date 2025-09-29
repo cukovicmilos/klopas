@@ -485,7 +485,7 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
             name='daily_menu_notification'
         )
         logger.info("Scheduler pokrenut - slanje jelovnika svaki dan u 20:00 (Belgrade vreme)")
-        
+
         # Pokreni bot sa error handling
         logger.info("Bot pokrenut...")
         self._run_bot_with_retry()
