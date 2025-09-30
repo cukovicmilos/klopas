@@ -34,9 +34,17 @@ class MenuScraper:
                 5: 'maj', 6: 'jun', 7: 'jul', 8: 'avgust',
                 9: 'septembar', 10: 'oktobar', 11: 'novembar', 12: 'decembar'
             }
-            
-            current_month_name = month_names_sr[current_date.month]
-            current_year = current_date.year
+
+            # Ako smo u poslednjih 5 dana meseca, traži sledeći mesec
+            if current_date.day >= 25:
+                target_month = current_date.month + 1 if current_date.month < 12 else 1
+                target_year = current_date.year if current_date.month < 12 else current_date.year + 1
+            else:
+                target_month = current_date.month
+                target_year = current_date.year
+
+            current_month_name = month_names_sr[target_month]
+            current_year = target_year
             
             links = soup.find_all('a', href=True)
             

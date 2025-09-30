@@ -476,15 +476,21 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
         # Postavi handlere
         self.setup_handlers()
         
-        # Postavi daily job - svaki dan u 20:00 (8 PM) lokalnog vremena
+        # Postavi daily job - svaki dan u 20:00 Belgrade vremena
         job_queue = self.application.job_queue
         belgrade_tz = pytz.timezone('Europe/Belgrade')
+
+        # Kreiraj timezone-aware time objekat za 20:00 Belgrade
+        # Koristimo datetime.now sa timezone, zatim .time() metodu
+        target_time = datetime.now(belgrade_tz).replace(hour=20, minute=0, second=0, microsecond=0).time()
+
         job_queue.run_daily(
             self.scheduled_daily_menu,
-            time(hour=20, minute=0, tzinfo=belgrade_tz),  # 20:00 Belgrade time
+            target_time,
             name='daily_menu_notification'
         )
-        logger.info("Scheduler pokrenut - slanje jelovnika svaki dan u 20:00 (Belgrade vreme)")
+
+        logger.info(f"Scheduler pokrenut - slanje jelovnika svaki dan u 20:00 Belgrade vremena")
 
         # Pokreni bot sa error handling
         logger.info("Bot pokrenut...")
