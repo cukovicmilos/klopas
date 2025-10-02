@@ -407,6 +407,38 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
                 f"Detalji: {str(e)}"
             )
             
+    async def check_and_send_menu(self, context: ContextTypes.DEFAULT_TYPE):
+        """Proverava svakih 5 minuta da li je vreme (19:55-20:05) za slanje jelovnika"""
+        import pytz
+        belgrade_tz = pytz.timezone('Europe/Belgrade')
+        now = datetime.now(belgrade_tz)
+
+        # Proveri da li je između 19:55 i 20:05
+        if not (19 <= now.hour <= 20):
+            return  # Nije vreme
+
+        if now.hour == 19 and now.minute < 55:
+            return  # Pre 19:55
+
+        if now.hour == 20 and now.minute > 5:
+            return  # Posle 20:05
+
+        # Proveri da li je već poslato danas
+        today_str = now.strftime('%Y-%m-%d')
+        marker_file = Path(f"data/.sent_{today_str}")
+
+        if marker_file.exists():
+            return  # Već poslato danas
+
+        logger.info(f"⏰ Vreme je {now.strftime('%H:%M')} - vreme za slanje jelovnika!")
+
+        # Pozovi funkciju za slanje
+        await self.scheduled_daily_menu(context)
+
+        # Označi da je poslato danas
+        marker_file.touch()
+        logger.info(f"✅ Marker postavljen: {marker_file}")
+
     async def scheduled_daily_menu(self, context: ContextTypes.DEFAULT_TYPE):
         """Funkcija koja se poziva svaki radni dan u 20:00"""
 
@@ -476,25 +508,18 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
         # Postavi handlere
         self.setup_handlers()
         
-        # Postavi daily job - svaki dan u 20:00 Belgrade vremena
+        # Postavi check job - provera svakih 5 minuta da li treba poslati jelovnik
+        # Ovo je pouzdanije od run_daily jer radi i kada se sistem probudi iz sleep-a
         job_queue = self.application.job_queue
-        belgrade_tz = pytz.timezone('Europe/Belgrade')
 
-        # Kreiraj timezone-aware time objekat za 20:00 Belgrade
-        # VAŽNO: Mora biti datetime.time objekat sa tzinfo, ne samo .time()
-        import datetime as dt
-        target_time = dt.time(hour=20, minute=0, second=0, tzinfo=belgrade_tz)
-
-        job_queue.run_daily(
-            self.scheduled_daily_menu,
-            target_time,
-            name='daily_menu_notification'
+        job_queue.run_repeating(
+            self.check_and_send_menu,
+            interval=300,  # 5 minuta
+            first=10,      # Pokreni prvi put nakon 10 sekundi
+            name='menu_check_repeating'
         )
 
-        # Log scheduler info
-        now = datetime.now(belgrade_tz)
-        logger.info(f"Scheduler pokrenut - slanje jelovnika svaki dan u {target_time.strftime('%H:%M %Z')}")
-        logger.info(f"Trenutno vreme: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info("Scheduler pokrenut - provera svakih 5 minuta da li je 20:00 za slanje jelovnika")
 
         # Pokreni bot sa error handling
         logger.info("Bot pokrenut...")
