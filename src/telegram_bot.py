@@ -39,6 +39,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Disable verbose logging from httpx (Telegram API requests)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+# Disable verbose logging from apscheduler
+logging.getLogger('apscheduler').setLevel(logging.WARNING)
+
 
 class KlopasBot:
     def __init__(self):
