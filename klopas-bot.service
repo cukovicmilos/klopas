@@ -1,0 +1,18 @@
+[Unit]
+Description=Klopas Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chule
+WorkingDirectory=/home/chule/Documents/projects/klopas
+Environment="PATH=/home/chule/Documents/projects/klopas/venv/bin:/usr/bin"
+ExecStart=/home/chule/Documents/projects/klopas/venv/bin/python /home/chule/Documents/projects/klopas/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/chule/Documents/projects/klopas/bot.log
+StandardError=append:/home/chule/Documents/projects/klopas/bot.log
+
+[Install]
+WantedBy=multi-user.target

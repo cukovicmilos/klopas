@@ -21,6 +21,9 @@ data/daily/*.md
 logs/
 bot.log
 bot.log.*
+bot_startup.log
+data/.sent_*
+data/*.log
 
 # Environment
 .env

@@ -432,15 +432,22 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
 
         logger.info(f"⏰ Vreme je {now.strftime('%H:%M')} - vreme za slanje jelovnika!")
 
-        # Pozovi funkciju za slanje
-        await self.scheduled_daily_menu(context)
+        # Pozovi funkciju za slanje i proveri uspešnost
+        success = await self.scheduled_daily_menu(context)
 
-        # Označi da je poslato danas
-        marker_file.touch()
-        logger.info(f"✅ Marker postavljen: {marker_file}")
+        # Označi da je poslato SAMO ako je slanje bilo uspešno
+        if success:
+            marker_file.touch()
+            logger.info(f"✅ Marker postavljen: {marker_file}")
+        else:
+            logger.warning(f"⚠️ Slanje nije uspelo, marker NIJE postavljen. Ponoviću pokušaj u sledećem ciklusu.")
 
     async def scheduled_daily_menu(self, context: ContextTypes.DEFAULT_TYPE):
-        """Funkcija koja se poziva svaki radni dan u 20:00"""
+        """Funkcija koja se poziva svaki radni dan u 20:00
+
+        Returns:
+            bool: True ako je poruka uspešno poslata, False inače
+        """
 
         logger.info("=" * 50)
         logger.info("SCHEDULER TRIGGERED - scheduled_daily_menu started")
@@ -456,7 +463,7 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
         # Proveri da li je sutra radni dan
         if tomorrow.weekday() >= 5:  # Vikend
             logger.info("Sutra je vikend, ne šaljem jelovnik")
-            return
+            return False
 
         # Formatiraj datum za ime fajla
         date_str = tomorrow.strftime('%Y-%m-%d')
@@ -467,7 +474,7 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
         # Proveri da li fajl postoji
         if not file_path.exists():
             logger.warning(f"Jelovnik za {date_str} ne postoji")
-            return
+            return False
 
         logger.info(f"Menu file found! Reading content...")
 
@@ -494,12 +501,15 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
                 )
                 logger.info(f"✅ SUCCESS: Poslat jelovnik za {date_str} u grupu!")
                 logger.info("=" * 50)
+                return True  # Uspešno poslato
             except Exception as e:
                 logger.error(f"❌ GREŠKA pri slanju u grupu: {e}")
                 logger.error("=" * 50)
+                return False  # Neuspešno
         else:
             logger.error("❌ Group ID nije konfigurisan!")
             logger.error("=" * 50)
+            return False  # Neuspešno
 
 
     def run(self):
