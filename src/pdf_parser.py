@@ -53,123 +53,98 @@ class MenuParser:
     
     def _parse_table(self, table: List[List[str]], menu_data: Dict):
         """Parsira tabelu - svaki red je jedan dan"""
-        
+
         for row in table:
-            if not row or len(row) < 2:
+            if not row or len(row) < 1:
                 continue
-                
-            # Prva kolona sadrži dan, datum i obroke
+
+            # Prva kolona sadrži dan, datum i obroke - to je sve što nam treba
             meals_column = row[0] if row[0] else ""
-            # Druga kolona sadrži sastojke (koje ćemo ignorisati za sada)
-            ingredients_column = row[1] if len(row) > 1 and row[1] else ""
-            
+
             if not meals_column:
                 continue
-            
-            # Parsira podatke iz prve kolone
-            day_data = self._parse_day_column(meals_column, ingredients_column)
-            
+
+            # Parsira podatke samo iz leve kolone (ignorišemo desnu kolonu potpuno)
+            day_data = self._parse_day_column(meals_column)
+
             if day_data and day_data.get('date'):
                 menu_data[day_data['date']] = day_data
     
-    def _parse_day_column(self, meals_text: str, ingredients_text: str) -> Optional[Dict]:
-        """Parsira kolonu sa danom i obrocima"""
-        
-        lines = meals_text.split('\n')
-        
+    def _parse_day_column(self, meals_text: str) -> Optional[Dict]:
+        """Parsira kolonu sa danom i obrocima - samo leva strana PDF-a"""
+
         # Pronađi dan i datum
         day_pattern = r'(PONEDELJAK|UTORAK|SREDA|ČETVRTAK|PETAK)\s+(\d{1,2}\.\d{1,2}\.\d{4})'
-        
-        day_name = None
-        date_str = None
-        
-        for line in lines:
-            day_match = re.search(day_pattern, line, re.IGNORECASE)
-            if day_match:
-                day_name = day_match.group(1).lower()
-                date_str = day_match.group(2).rstrip('.')
-                break
-        
-        if not day_name or not date_str:
+        day_match = re.search(day_pattern, meals_text, re.IGNORECASE)
+
+        if not day_match:
             return None
-        
+
+        day_name = day_match.group(1).lower()
+        date_str = day_match.group(2).rstrip('.')
+
         # Konvertuj datum u YYYY-MM-DD format
         try:
             date_obj = datetime.strptime(date_str, '%d.%m.%Y')
             formatted_date = date_obj.strftime('%Y-%m-%d')
         except:
-            formatted_date = date_str
-        
-        # Ekstraktuj obroke
+            return None
+
+        # Ekstraktuj obroke koristeći regex da nađemo pozicije svih obroka
+        # Ovo omogućava da uhvatimo sadržaj koji se prostire na više linija
+        # VAŽNO: Koristimo \b za word boundary da izbegnemo da "RUČAK" matchuje "DORUČAK"
+        doručak_pattern = r'\bDORUČAK\s*[–-]\s*(.+?)(?=UŽINA\s*I|$)'
+        užina_i_pattern = r'\bUŽINA\s*I\s*[–-]\s*(.+?)(?=\bRUČAK|$)'
+        ručak_pattern = r'\bRUČAK\s*[–-]\s*(.+?)(?=UŽINA\s*II|$)'
+        užina_ii_pattern = r'\bUŽINA\s*II\s*[–-]\s*(.+?)(?=PONEDELJAK|UTORAK|SREDA|ČETVRTAK|PETAK|$)'
+
         meals = {
             'doručak': [],
             'užina_i': [],
             'ručak': [],
             'užina_ii': []
         }
-        
-        current_meal = None
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            line_lower = line.lower()
-            
-            # Detektuj tip obroka
-            if 'doručak' in line_lower:
-                current_meal = 'doručak'
-                content = self._extract_meal_from_line(line, 'doručak')
-                if content:
-                    meals['doručak'] = [content]
-                    
-            elif 'užina i' in line_lower and 'užina ii' not in line_lower:
-                current_meal = 'užina_i'
-                content = self._extract_meal_from_line(line, 'užina i')
-                if content:
-                    meals['užina_i'] = [content]
-                    
-            elif 'ručak' in line_lower:
-                current_meal = 'ručak'
-                content = self._extract_meal_from_line(line, 'ručak')
-                if content:
-                    meals['ručak'] = [content]
-                    
-            elif 'užina ii' in line_lower:
-                current_meal = 'užina_ii'
-                content = self._extract_meal_from_line(line, 'užina ii')
-                if content:
-                    meals['užina_ii'] = [content]
-        
-        # Dodaj glavna jela iz kolone sa sastojcima (prva linija svakog jela)
-        if ingredients_text:
-            ingredient_lines = ingredients_text.split('\n')
-            
-            # Prva linija je obično naziv glavnog jela
-            main_dishes = []
-            for line in ingredient_lines:
-                line = line.strip()
-                if line and not any(word in line.lower() for word in 
-                                   ['brašno', 'ulje', 'so', 'šećer', 'mleko', 
-                                    'jaje', 'dodatak', 'paprika', 'crni luk', 
-                                    'beli luk', 'voda', 'peršun']):
-                    # Ovo je verovatno naziv jela, ne sastojak
-                    if all(c.isupper() or c.isspace() for c in line):
-                        main_dishes.append(line)
-            
-            # Dodaj glavna jela ručku ako postoje
-            if main_dishes and meals['ručak']:
-                # Dodaj naziv glavnog jela na početak opisa ručka
-                for dish in main_dishes[:1]:  # Uzmi samo prvo glavno jelo
-                    if dish not in meals['ručak'][0]:
-                        meals['ručak'][0] = f"{dish} - {meals['ručak'][0]}"
-        
+
+        # Ekstraktuj svaki obrok
+        doručak_match = re.search(doručak_pattern, meals_text, re.IGNORECASE | re.DOTALL)
+        if doručak_match:
+            content = self._clean_meal_content(doručak_match.group(1))
+            if content:
+                meals['doručak'] = [content]
+
+        užina_i_match = re.search(užina_i_pattern, meals_text, re.IGNORECASE | re.DOTALL)
+        if užina_i_match:
+            content = self._clean_meal_content(užina_i_match.group(1))
+            if content:
+                meals['užina_i'] = [content]
+
+        ručak_match = re.search(ručak_pattern, meals_text, re.IGNORECASE | re.DOTALL)
+        if ručak_match:
+            content = self._clean_meal_content(ručak_match.group(1))
+            if content:
+                meals['ručak'] = [content]
+
+        užina_ii_match = re.search(užina_ii_pattern, meals_text, re.IGNORECASE | re.DOTALL)
+        if užina_ii_match:
+            content = self._clean_meal_content(užina_ii_match.group(1))
+            if content:
+                meals['užina_ii'] = [content]
+
         return {
             'day_name': day_name,
             'date': formatted_date,
             'meals': meals
         }
+
+    def _clean_meal_content(self, content: str) -> str:
+        """Očisti sadržaj obroka od višak whitespace-a i newline-ova"""
+        # Zameni višestruke spaces i newlines sa jednim space-om
+        content = re.sub(r'\s+', ' ', content)
+        # Ukloni whitespace na početku i kraju
+        content = content.strip()
+        # Ukloni trailing zareze i crtice
+        content = content.rstrip(',-–')
+        return content
     
     def _extract_meal_from_line(self, line: str, meal_type: str) -> str:
         """Ekstraktuje sadržaj obroka iz linije"""
