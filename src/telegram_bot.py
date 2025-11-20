@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from src.scraper import MenuScraper
 from src.pdf_parser import MenuParser
 from src.data_organizer import DataOrganizer
+from src.user_stats import UserStatsTracker
 
 load_dotenv()
 
@@ -48,10 +49,13 @@ logging.getLogger('apscheduler').setLevel(logging.WARNING)
 class KlopasBot:
     def __init__(self):
         self.token = os.getenv('TELEGRAM_BOT_TOKEN')
-        self.group_id = os.getenv('TELEGRAM_GROUP_ID')
         
         if not self.token:
             raise ValueError("TELEGRAM_BOT_TOKEN nije postavljen u .env fajlu")
+        
+        # Admin user ID - samo admin može koristiti "Novi mesec" opciju
+        admin_id = os.getenv('TELEGRAM_ADMIN_ID')
+        self.admin_id = int(admin_id) if admin_id else None
             
         self.application = Application.builder().token(self.token).build()
         
@@ -60,8 +64,15 @@ class KlopasBot:
         self.parser = MenuParser()
         self.organizer = DataOrganizer()
         
+        # Tracker za statistiku korisnika
+        self.stats_tracker = UserStatsTracker()
+        
         # Putanja do markdown fajlova
         self.daily_dir = Path("data/daily")
+    
+    def _is_admin(self, user_id: int) -> bool:
+        """Proveri da li je korisnik admin"""
+        return self.admin_id is not None and user_id == self.admin_id
         
     def setup_handlers(self):
         """Postavi sve handlere za bot komande"""
@@ -88,33 +99,74 @@ class KlopasBot:
         # Callback za inline dugmad
         self.application.add_handler(CallbackQueryHandler(self.button_callback))
         
-    def get_main_keyboard(self):
+    def _track_user(self, update: Update, action: str = "command"):
+        """Helper metoda za praćenje aktivnosti korisnika"""
+        try:
+            if update.message and update.message.from_user:
+                user = update.message.from_user
+                self.stats_tracker.track_user_activity(
+                    user_id=user.id,
+                    username=user.username,
+                    first_name=user.first_name,
+                    action=action
+                )
+            elif update.callback_query and update.callback_query.from_user:
+                user = update.callback_query.from_user
+                self.stats_tracker.track_user_activity(
+                    user_id=user.id,
+                    username=user.username,
+                    first_name=user.first_name,
+                    action="callback"
+                )
+        except Exception as e:
+            logger.error(f"Greška pri praćenju korisnika: {e}")
+    
+    def get_main_keyboard(self, user_id: Optional[int] = None):
         """Kreira glavnu tastaturu koja je uvek vidljiva"""
         keyboard = [
             [
                 KeyboardButton("🍽️ Danas"),
                 KeyboardButton("📅 Sutra")
-            ],
-            [
-                KeyboardButton("🔄 Novi mesec"),
-                KeyboardButton("ℹ️ Pomoć")
             ]
         ]
+        
+        # Dodaj "Novi mesec" dugme samo za admina
+        if user_id and self._is_admin(user_id):
+            keyboard.append([
+                KeyboardButton("🔄 Novi mesec"),
+                KeyboardButton("⚙️ Podešavanja")
+            ])
+        else:
+            keyboard.append([
+                KeyboardButton("⚙️ Podešavanja")
+            ])
+        
+        keyboard.append([
+            KeyboardButton("ℹ️ Pomoć")
+        ])
+        
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler za /start komandu"""
+        self._track_user(update, "start")
         
+        user_id = update.message.from_user.id
         await update.message.reply_text(
             "🍽️ *Klopas Bot - Jelovnik vrtića*\n\n"
             "Dobrodošli! Ovaj bot vam šalje dnevni jelovnik iz vrtića.\n\n"
             "Koristite dugmiće ispod za navigaciju:",
             parse_mode='Markdown',
-            reply_markup=self.get_main_keyboard()
+            reply_markup=self.get_main_keyboard(user_id)
         )
         
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler za /help komandu"""
+        self._track_user(update, "help")
+        
+        user_id = update.message.from_user.id
+        is_admin = self._is_admin(user_id)
+        
         help_text = """
 🍽️ *Klopas Bot - Pomoć*
 
@@ -128,38 +180,50 @@ class KlopasBot:
 *U grupama (tagovi):*
 @klopasbot danas - Jelovnik za danas
 @klopasbot sutra - Jelovnik za sutra
-@klopasbot novi mesec - Preuzmi najnoviji jelovnik
 @klopasbot pomoć - Prikaži pomoć
 
 *Dugmići (privatni chat):*
 🍽️ Danas - Prikaži današnji jelovnik
 📅 Sutra - Prikaži sutrašnji jelovnik
-🔄 Novi mesec - Preuzmi najnoviji jelovnik
+⚙️ Podešavanja - Upravljaj automatskim obaveštenjima
 ℹ️ Pomoć - Ova poruka
 
 *Automatsko slanje:*
-Bot automatski šalje jelovnik za sledeći dan svaki radni dan u 20:00h.
-
-*Dugme "Novi mesec":*
-Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta vrtića.
+Bot može da ti automatski šalje jelovnik za sutra svaki radni dan u 20:00h.
+Možeš uključiti/isključiti obaveštenja u podešavanjima.
         """
+        
+        # Dodaj admin informacije ako je korisnik admin
+        if is_admin:
+            help_text += """
+*Admin opcije:*
+🔄 Novi mesec - Preuzmi najnoviji jelovnik sa sajta vrtića (samo za admina)
+            """
+        
         await update.message.reply_text(
             help_text, 
             parse_mode='Markdown',
-            reply_markup=self.get_main_keyboard()
+            reply_markup=self.get_main_keyboard(user_id)
         )
         
     async def menu_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler za /jelovnik komandu"""
+        self._track_user(update, "menu")
+        
+        user_id = update.message.from_user.id
+        
         keyboard = [
             [
                 InlineKeyboardButton("🍽️ Danas", callback_data='today'),
                 InlineKeyboardButton("📅 Sutra", callback_data='tomorrow')
-            ],
-            [
-                InlineKeyboardButton("🔄 Novi mesec", callback_data='new_month')
             ]
         ]
+        
+        # Dodaj "Novi mesec" dugme samo za admina
+        if self._is_admin(user_id):
+            keyboard.append([
+                InlineKeyboardButton("🔄 Novi mesec", callback_data='new_month')
+            ])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
@@ -169,17 +233,48 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
         
     async def today_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler za /danas komandu"""
+        self._track_user(update, "today")
         await self.send_menu_for_date(update, datetime.now())
         
     async def tomorrow_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler za /sutra komandu"""
+        self._track_user(update, "tomorrow")
         tomorrow = datetime.now() + timedelta(days=1)
         await self.send_menu_for_date(update, tomorrow)
+    
+    async def settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler za podešavanja"""
+        self._track_user(update, "settings")
+        
+        user_id = update.message.from_user.id
+        notifications = self.stats_tracker.get_notifications(user_id)
+        
+        # Emoji za status
+        status_emoji = "🔔" if notifications else "🔕"
+        button_text = "🔕 Isključi obaveštenja" if notifications else "🔔 Uključi obaveštenja"
+        
+        keyboard = [
+            [InlineKeyboardButton(button_text, callback_data='toggle_notifications')]
+        ]
+        
+        message = (
+            f"⚙️ *Podešavanja*\n\n"
+            f"{status_emoji} *Automatska obaveštenja:* {'Uključena' if notifications else 'Isključena'}\n\n"
+            f"Bot šalje jelovnik za sutra svaki radni dan u 20:00h."
+        )
+        
+        await update.message.reply_text(
+            message,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
         
     async def handle_keyboard_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler za dugmiće sa tastature"""
+        self._track_user(update, "keyboard")
         text = update.message.text
+        user_id = update.message.from_user.id
         
         if text == "🍽️ Danas":
             await self.send_menu_for_date(update, datetime.now())
@@ -187,12 +282,22 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
             tomorrow = datetime.now() + timedelta(days=1)
             await self.send_menu_for_date(update, tomorrow)
         elif text == "🔄 Novi mesec":
+            # Proveri da li je korisnik admin
+            if not self._is_admin(user_id):
+                await update.message.reply_text(
+                    "⛔ Ova opcija je dostupna samo za administratora bota.",
+                    reply_markup=self.get_main_keyboard(user_id)
+                )
+                return
             await self.download_new_month_menu(update)
+        elif text == "⚙️ Podešavanja":
+            await self.settings_command(update, context)
         elif text == "ℹ️ Pomoć":
             await self.help_command(update, context)
     
     async def handle_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler za mention poruke (@KlopasBOT danas/sutra)"""
+        self._track_user(update, "group_mention")
         logger.info(f"=== GROUP MESSAGE HANDLER TRIGGERED ===")
         logger.info(f"Chat ID: {update.message.chat.id}")
         logger.info(f"Chat type: {update.message.chat.type}")
@@ -233,6 +338,8 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
         message_text_lower = message_text.lower()
             
         # Izvuci komandu iz poruke
+        user_id = update.message.from_user.id
+        
         if "danas" in message_text_lower or "today" in message_text_lower:
             await self.send_menu_for_date(update, datetime.now())
         elif "sutra" in message_text_lower or "tomorrow" in message_text_lower:
@@ -243,22 +350,36 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
         elif "pomoć" in message_text_lower or "help" in message_text_lower:
             await self.help_command(update, context)
         elif "novi mesec" in message_text_lower or "new month" in message_text_lower:
+            # Proveri da li je korisnik admin
+            if not self._is_admin(user_id):
+                await update.message.reply_text(
+                    "⛔ Ova opcija je dostupna samo za administratora bota."
+                )
+                return
             await self.download_new_month_menu(update)
         else:
             # Ako nema specifičnu komandu, pokaži opcije
-            await update.message.reply_text(
+            help_text = (
                 "🍽️ Klopas Bot\n\n"
                 "Mogu da vam pomožem sa:\n"
                 f"@{bot_username} danas - jelovnik za danas\n"
                 f"@{bot_username} sutra - jelovnik za sutra\n"
-                f"@{bot_username} novi mesec - preuzmi najnoviji jelovnik\n"
                 f"@{bot_username} pomoć - sve dostupne opcije"
             )
+            
+            # Dodaj admin opcije ako je korisnik admin
+            if self._is_admin(user_id):
+                help_text += f"\n@{bot_username} novi mesec - preuzmi najnoviji jelovnik (samo admin)"
+                
+            await update.message.reply_text(help_text)
     
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handler za callback dugmad"""
+        self._track_user(update, "callback")
         query = update.callback_query
         await query.answer()
+        
+        user_id = query.from_user.id
         
         if query.data == 'today':
             await self.send_menu_for_date(update, datetime.now(), is_callback=True)
@@ -266,10 +387,59 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
             tomorrow = datetime.now() + timedelta(days=1)
             await self.send_menu_for_date(update, tomorrow, is_callback=True)
         elif query.data == 'new_month':
+            # Proveri da li je korisnik admin
+            if not self._is_admin(user_id):
+                await query.message.reply_text(
+                    "⛔ Ova opcija je dostupna samo za administratora bota.",
+                    reply_markup=self.get_main_keyboard(user_id)
+                )
+                return
             await self.download_new_month_menu(update, is_callback=True)
+        elif query.data == 'toggle_notifications':
+            await self.toggle_notifications_callback(update, context)
+    
+    async def toggle_notifications_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Toggle notifications za korisnika"""
+        query = update.callback_query
+        user_id = query.from_user.id
+        
+        # Toggle status
+        current = self.stats_tracker.get_notifications(user_id)
+        new_status = not current
+        self.stats_tracker.set_notifications(user_id, new_status)
+        
+        # Ažuriraj poruku
+        status_emoji = "🔔" if new_status else "🔕"
+        button_text = "🔕 Isključi obaveštenja" if new_status else "🔔 Uključi obaveštenja"
+        
+        keyboard = [
+            [InlineKeyboardButton(button_text, callback_data='toggle_notifications')]
+        ]
+        
+        message = (
+            f"⚙️ *Podešavanja*\n\n"
+            f"{status_emoji} *Automatska obaveštenja:* {'Uključena' if new_status else 'Isključena'}\n\n"
+            f"Bot šalje jelovnik za sutra svaki radni dan u 20:00h."
+        )
+        
+        await query.message.edit_text(
+            message,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+        await query.answer(
+            f"✅ Obaveštenja {'uključena' if new_status else 'isključena'}!"
+        )
             
     async def send_menu_for_date(self, update: Update, date: datetime, is_callback: bool = False):
         """Pošalji jelovnik za određeni datum"""
+        
+        # Dobavi user_id za tastaturu
+        if is_callback:
+            user_id = update.callback_query.from_user.id
+        else:
+            user_id = update.message.from_user.id
         
         # Formatiraj datum za ime fajla
         date_str = date.strftime('%Y-%m-%d')
@@ -287,7 +457,8 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
         # Proveri da li fajl postoji
         if not file_path.exists():
             message = f"⚠️ Jelovnik za {date.strftime('%d.%m.%Y.')} nije pronađen.\n\n"
-            message += "Koristite dugme '🔄 Novi mesec' za preuzimanje najnovijeg jelovnika."
+            if self._is_admin(user_id):
+                message += "Koristite dugme '🔄 Novi mesec' za preuzimanje najnovijeg jelovnika."
             if is_callback:
                 await update.callback_query.message.reply_text(message)
             else:
@@ -306,13 +477,13 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
             await update.callback_query.message.reply_text(
                 message, 
                 parse_mode='Markdown',
-                reply_markup=self.get_main_keyboard()
+                reply_markup=self.get_main_keyboard(user_id)
             )
         else:
             await update.message.reply_text(
                 message,
                 parse_mode='Markdown',
-                reply_markup=self.get_main_keyboard()
+                reply_markup=self.get_main_keyboard(user_id)
             )
             
     def _format_menu_message(self, markdown_content: str, date: datetime) -> str:
@@ -412,6 +583,33 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
                 f"Detalji: {str(e)}"
             )
             
+    async def update_bot_short_description(self, context: ContextTypes.DEFAULT_TYPE):
+        """Ažuriraj short description bota sa statistikom aktivnih korisnika"""
+        try:
+            stats = self.stats_tracker.get_current_month_stats()
+            current_active = stats["current_month_active"]
+            peak_active = stats["peak_monthly_active"]
+            
+            # Koristi trenutni mesečni ili peak broj korisnika
+            user_count = max(current_active, peak_active)
+            
+            if user_count == 0:
+                description = "Jelovnik vrtića Naša Radost Subotica - svaki dan!"
+            elif user_count == 1:
+                description = "Jelovnik vrtića Naša Radost Subotica - 1 aktivan korisnik"
+            else:
+                description = f"Jelovnik vrtića Naša Radost Subotica - {user_count} aktivnih korisnika"
+            
+            # Ažuriraj short description
+            await context.bot.set_my_short_description(
+                short_description=description
+            )
+            
+            logger.info(f"✅ Ažuriran bot short description: '{description}'")
+            
+        except Exception as e:
+            logger.error(f"❌ Greška pri ažuriranju short description: {e}")
+    
     async def check_and_send_menu(self, context: ContextTypes.DEFAULT_TYPE):
         """Proverava svakih 5 minuta da li je vreme (19:55-20:05) za slanje jelovnika"""
         import pytz
@@ -449,9 +647,10 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
 
     async def scheduled_daily_menu(self, context: ContextTypes.DEFAULT_TYPE):
         """Funkcija koja se poziva svaki radni dan u 20:00
+        Šalje jelovnik svim aktivnim korisnicima u privatnom chatu
 
         Returns:
-            bool: True ako je poruka uspešno poslata, False inače
+            bool: True ako je poruka uspešno poslata bar jednom korisniku, False inače
         """
 
         logger.info("=" * 50)
@@ -463,7 +662,6 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
 
         logger.info(f"Current time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info(f"Tomorrow: {tomorrow.strftime('%Y-%m-%d %H:%M:%S')} (weekday: {tomorrow.weekday()})")
-        logger.info(f"Group ID configured: {self.group_id}")
 
         # Proveri da li je sutra radni dan
         if tomorrow.weekday() >= 5:  # Vikend
@@ -495,26 +693,36 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
 
         logger.info(f"Message formatted ({len(message)} chars)")
 
-        # Pošalji u grupu
-        if self.group_id:
+        # Dobavi korisnike sa uključenim notifikacijama
+        users_with_notifications = self.stats_tracker.get_users_with_notifications_enabled()
+        logger.info(f"Found {len(users_with_notifications)} users with notifications enabled")
+
+        if not users_with_notifications:
+            logger.warning("Nema korisnika sa uključenim notifikacijama")
+            return False
+
+        # Pošalji korisnicima sa uključenim notifikacijama
+        success_count = 0
+        fail_count = 0
+
+        for user_id in users_with_notifications:
             try:
-                logger.info(f"Sending message to group {self.group_id}...")
                 await context.bot.send_message(
-                    chat_id=self.group_id,
+                    chat_id=user_id,
                     text=message,
                     parse_mode='Markdown'
                 )
-                logger.info(f"✅ SUCCESS: Poslat jelovnik za {date_str} u grupu!")
-                logger.info("=" * 50)
-                return True  # Uspešno poslato
+                success_count += 1
+                logger.info(f"✅ Poslato korisniku {user_id}")
             except Exception as e:
-                logger.error(f"❌ GREŠKA pri slanju u grupu: {e}")
-                logger.error("=" * 50)
-                return False  # Neuspešno
-        else:
-            logger.error("❌ Group ID nije konfigurisan!")
-            logger.error("=" * 50)
-            return False  # Neuspešno
+                fail_count += 1
+                logger.warning(f"❌ Greška pri slanju korisniku {user_id}: {e}")
+
+        logger.info(f"SLANJE ZAVRŠENO: {success_count} uspešno, {fail_count} neuspešno")
+        logger.info("=" * 50)
+
+        # Uspeh ako je bar jednom korisniku poslato
+        return success_count > 0
 
 
     def run(self):
@@ -534,7 +742,21 @@ Koristi ovo dugme početkom meseca za preuzimanje najnovijeg jelovnika sa sajta 
             name='menu_check_repeating'
         )
 
+        # Postavi job za ažuriranje short description - jednom dnevno u 9:00
+        job_queue.run_daily(
+            self.update_bot_short_description,
+            time=time(hour=9, minute=0),
+            name='update_description_daily'
+        )
+        
+        # Ažuriraj short description odmah pri pokretanju
+        job_queue.run_once(
+            self.update_bot_short_description,
+            when=5  # Nakon 5 sekundi
+        )
+
         logger.info("Scheduler pokrenut - provera svakih 5 minuta da li je 20:00 za slanje jelovnika")
+        logger.info("Scheduler pokrenut - ažuriranje short description svaki dan u 9:00")
 
         # Pokreni bot sa error handling
         logger.info("Bot pokrenut...")

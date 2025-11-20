@@ -12,6 +12,8 @@ Telegram bot za automatsko obaveštavanje o jelovniku u vrtiću "Naša Radost" S
 - 📱 Rad u Telegram grupama
 - 🔁 Log rotation - automatsko čišćenje logova (max 5MB po fajlu, 5 backup fajlova)
 - ✅ Pametno praćenje poslatih poruka (marker fajlovi sprečavaju duplikate)
+- 📊 Automatsko praćenje aktivnih korisnika
+- 🎯 Dinamički bot short description sa brojem aktivnih korisnika
 
 ## Instalacija
 
@@ -89,10 +91,12 @@ klopas/
 │   ├── scraper.py          # Preuzimanje PDF-a sa sajta
 │   ├── pdf_parser.py       # Parsiranje PDF jelovnika
 │   ├── data_organizer.py   # Organizacija podataka u .md fajlove
+│   ├── user_stats.py       # Praćenje aktivnosti korisnika
 │   └── telegram_bot.py     # Telegram bot logika
 ├── data/
 │   ├── pdfs/              # Preuzeti PDF fajlovi
-│   └── daily/             # Markdown fajlovi po danima (YYYY-MM-DD.md format)
+│   ├── daily/             # Markdown fajlovi po danima (YYYY-MM-DD.md format)
+│   └── user_stats.json    # Statistika aktivnosti korisnika
 ├── venv/                  # Python virtual environment
 ├── bot.py                 # Glavna skripta za pokretanje bota
 ├── start_bot.py           # Bot starter sa webhook clearing-om
@@ -196,6 +200,36 @@ tail -n 50 bot.log
 # Systemd logovi
 sudo journalctl -u klopas-bot.service -f
 ```
+
+## Praćenje aktivnosti korisnika
+
+Bot automatski prati aktivnost korisnika i ažurira short description sa brojem aktivnih korisnika.
+
+### Kako funkcioniše
+
+- **Automatsko praćenje**: Svaka interakcija sa botom (komanda, klik na dugme, mention u grupi) se automatski prati
+- **Mesečna statistika**: Bot prati koliko je korisnika aktivno u trenutnom mesecu
+- **Dinamički opis**: Short description se ažurira svaki dan u 9:00h sa brojem aktivnih korisnika
+- **Format opisa**: 
+  - 0 korisnika: "Jelovnik vrtića Naša Radost Subotica - svaki dan!"
+  - 1 korisnik: "Jelovnik vrtića Naša Radost Subotica - 1 aktivan korisnik"
+  - N korisnika: "Jelovnik vrtića Naša Radost Subotica - N aktivnih korisnika"
+
+### Čuvanje podataka
+
+Statistika se čuva u `data/user_stats.json` fajlu i uključuje:
+- Ukupan broj korisnika koji su ikad koristili bota
+- Broj aktivnih korisnika po mesecima
+- Broj interakcija po korisniku
+- Datum prve i poslednje aktivnosti
+
+### Privacy
+
+Bot prati sledeće podatke:
+- Telegram user ID (potreban za identifikaciju)
+- Username (ako je javno dostupan)
+- Ime korisnika (first_name)
+- Datum i broj interakcija
 
 ## Troubleshooting
 

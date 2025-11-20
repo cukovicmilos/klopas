@@ -38,3 +38,4 @@ data/*.log
 # Claude
 .claude/agents/
 CLAUDE.md
+data/user_stats.json
